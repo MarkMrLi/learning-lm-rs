@@ -71,25 +71,89 @@ pub fn masked_softmax(y: &mut Tensor<f32>) {
 }
 
 pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: f32) {
-    todo!("实现 rms_norm，计算前做一些必要的检查会帮助你后续调试")
+    //检查形状的一致性
+    let x_shape = x.shape();
+    let y_shape = y.shape();
+    let n = x_shape.last().unwrap();
+    assert_eq!(y_shape.last().unwrap() , n, "x 和 y 的最后一个维度必须相等");
+    assert_eq!(w.shape(),&[*n], "w 的维度必须和 x 的最后一个维度相等");
+    assert_eq!(&x_shape[..x_shape.len()-1], &y_shape[..y_shape.len()-1], "x和y的前导维度必须一致");
+
+    // 计算总向量数量（前导维度的乘积）
+    let m = x_shape.iter().take(x_shape.len()-1).product::<usize>();
+    let n = *n;
+
+    // 获取底层数据指针
+    let x_data = x.data();
+    let w_data = w.data();
+    let y_data = unsafe { y.data_mut() };
+
+    // 逐向量处理
+    for i in 0..m {
+        // 计算平方和
+        let mut sum_sq = 0.0;
+        for j in 0..n {
+            let idx = i * n + j;
+            sum_sq += x_data[idx].powi(2);
+        }
+        
+        // 计算归一化因子
+        let mean_sq = sum_sq / n as f32;
+        let scale = 1.0 / (mean_sq + epsilon).sqrt();
+
+        // 应用公式：y_i = w_i * x_i * scale
+        for j in 0..n {
+            let idx = i * n + j;
+            y_data[idx] = w_data[j] * x_data[idx] * scale;
+        }
+    }
+    // todo!("实现 rms_norm，计算前做一些必要的检查会帮助你后续调试")
 }
 
 // y = silu(x) * y
 // hint: this is an element-wise operation
 pub fn swiglu(y: &mut Tensor<f32>, x: &Tensor<f32>) {
-    // let len = y.size();
-    // assert!(len == x.size());
+    let len = y.size();
+    assert!(len == x.size());
 
-    // let _y = unsafe { y.data_mut() };
-    // let _x = x.data();
+    let _y = unsafe { y.data_mut() };
+    let _x = x.data();
 
-    todo!("实现 silu，这里给了一些前期准备工作的提示，你可以参考")
+    for i in 0..len {
+        let x_val = _x[i];
+        let sigmoid = 1.0 / (1.0 + (-x_val).exp());
+        _y[i] *= x_val * sigmoid;
+    }
+
+    // todo!("实现 silu，这里给了一些前期准备工作的提示，你可以参考")
 }
 
 // C = beta * C + alpha * A @ B^T
 // hint: You don't need to do an explicit transpose of B
 pub fn matmul_transb(c: &mut Tensor<f32>, beta: f32, a: &Tensor<f32>, b: &Tensor<f32>, alpha: f32) {
-    todo!("实现 matmul_transb，计算前做一些必要的检查会帮助你后续调试");
+    let a_shape = a.shape();
+    let b_shape = b.shape();
+    let c_shape = c.shape();
+    let m = a_shape.first().unwrap();
+    let n = b_shape.first().unwrap();
+    
+    assert_eq!(a_shape.last(), b_shape.last(), "假设 A B 均为二维张量");
+    let k = a_shape.last().unwrap();
+    
+    let _c = unsafe { c.data_mut() };
+    let _a = a.data();
+    let _b = b.data();
+
+    for i in 0..*m {
+        for j in 0..*n {
+            let mut sum = 0.0;
+            for l in 0..*k {
+                sum += _a[i * *k + l] * _b[j * *k + l];
+            }
+            _c[i * *n + j] = beta * _c[i * *n + j] + alpha * sum;
+        }
+    }
+    // todo!("实现 matmul_transb，计算前做一些必要的检查会帮助你后续调试");
 }
 
 // Dot product of two tensors (treated as vectors)

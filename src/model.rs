@@ -6,8 +6,10 @@ use crate::kvcache::KVCache;
 use crate::operators as OP;
 use crate::params::LLamaParams;
 use crate::tensor::Tensor;
+use crate::operators::*;
 use safetensors::SafeTensors;
 use std::path::Path;
+
 pub struct Llama<T> {
     vocab: usize,           // vocab size
     n_layers: usize,        // number of layers
@@ -167,7 +169,31 @@ fn mlp(
     rms_w: &Tensor<f32>,
     eps: f32,
 ) {
-    todo!("Implement mlp");
+    //RMS 归一化
+    rms_norm(hidden_states, residual, rms_w, eps);
+
+    // Compute gate = hidden_states @ w_gate.T
+    matmul_transb(gate, 0., hidden_states, w_gate, 1.0);
+
+    // Step 3: Compute up = hidden_states @ w_up.T
+    matmul_transb(up, 0., hidden_states, w_up, 1.0);
+
+    // Step 4: Compute act = gate * sigmoid(gate) * up using SwiGLU
+    // Calculate sigmoid of gate into a temporary tensor
+    swiglu(gate, up);
+
+    matmul_transb(hidden_states, 0., gate, w_down, 1.0);
+
+    //Step 5: residual = hidden_states + residual
+    let len = residual.size();
+    let mut _residual = unsafe{residual.data_mut()};
+    let _output = hidden_states.data();
+    assert_eq!(len,hidden_states.size(),"output.shape != residual.shape");
+    for i in 0..len {
+        _residual[i] += _output[i];
+    }
+
+    // todo!("Implement mlp");
 }
 
 #[test]
