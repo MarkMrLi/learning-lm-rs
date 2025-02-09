@@ -105,8 +105,20 @@ impl Llama<f32> {
             let full_v = &mut cache.v_cache(layer, 0); // (total_seq, n_kv_h * dqkv)
 
             self_attention(&mut hidden_states, &mut att_scores, q, &full_k, &full_v, self.n_kv_h, n_groups, seq_len, total_seq_len, self.dqkv);
-            todo!("self_attention(...)");
-            todo!("down_proj matmul and add residual");
+            // todo!("self_attention(...)");
+
+            //out = attn_V @ O_weight.T
+
+            OP::matmul_transb(&mut q_buf, 0., &hidden_states, &self.params.wo[layer], 1.0);
+
+            //residual = out + residual
+
+            let _residual = unsafe { residual.data_mut() };
+            let _q_buf = q_buf.data();
+            for i in 0..seq_len * self.d {
+                _residual[i] += _q_buf[i];
+            }
+            // todo!("down_proj matmul and add residual");
 
             todo!("mlp(...)");
         }
