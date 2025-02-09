@@ -1,4 +1,5 @@
 use std::fs::File;
+// use std::intrinsics::sqrtf32;
 use std::vec;
 
 use crate::config::LlamaConfigJson;
@@ -103,6 +104,7 @@ impl Llama<f32> {
             let full_k = &mut cache.k_cache(layer, 0); // (total_seq, n_kv_h * dqkv)
             let full_v = &mut cache.v_cache(layer, 0); // (total_seq, n_kv_h * dqkv)
 
+            self_attention(&mut hidden_states, &mut att_scores, q, &full_k, &full_v, self.n_kv_h, n_groups, seq_len, total_seq_len, self.dqkv);
             todo!("self_attention(...)");
             todo!("down_proj matmul and add residual");
 
@@ -136,7 +138,10 @@ impl Llama<f32> {
         temperature: f32,
     ) -> Vec<u32>{
         let mut result = Vec::<u32>::new();
-        
+
+        let mut input = Tensor::<u32>::new(token_ids.to_vec(), &vec![token_ids.len()]);
+        let mut kvcache = self.new_cache();
+        self.forward(&input, &mut kvcache);
         todo!("实现文本生成");
         
         result
@@ -155,7 +160,101 @@ fn self_attention(
     total_seq_len: usize,
     dqkv: usize,
 ) {
-    todo!("Implement self_attention");
+    let scale = (dqkv as f32).sqrt();
+    let _q = q.data();
+    let _k = k.data();
+
+    let q_cols = n_kv_h * n_groups * dqkv;
+
+    // score = Q @ K.T / sqrt(dim) 计算注意力分数
+    let kv_cols = n_kv_h * dqkv;
+    {
+        let _att_scores = unsafe {
+            att_scores.data_mut()
+        };
+        // 遍历每个KV头
+        for kv_head in 0..n_kv_h {
+            // 每个KV头对应的Q头组（包含n_groups个Q头）
+            let q_head_start = kv_head * n_groups;
+            let q_head_end = q_head_start + n_groups;
+
+            
+            // 计算注意力分数
+            for s in 0..seq_len {
+                for g in 0..n_groups {
+                    let q_head = q_head_start + g;
+                    // 计算Q[s]中当前Q头的向量
+                    let q_start = q_head * dqkv;
+                    let q_end = q_start + dqkv;
+                    
+                    let q_vec = &_q[s * q_cols + q_start..s * q_cols + q_end];
+                    
+                    // 遍历K的每个位置计算点积
+                    for t in 0..total_seq_len {
+                        // 获取K中对应KV头的向量
+                        let k_start = kv_head * dqkv;
+                        let k_end = k_start + dqkv;
+
+                        let k_vec = &_k[t * kv_cols + k_start..t * kv_cols + k_end];
+                        
+                        // 手动计算点积
+                        let mut dot = 0.0;
+                        for i in 0..dqkv {
+                            dot += q_vec[i] * k_vec[i];
+                        }
+                        _att_scores[kv_head * (n_groups * seq_len * total_seq_len) 
+                                        + g * (seq_len * total_seq_len) 
+                                        + s * total_seq_len 
+                                        + t] = dot / scale;
+                    }
+                }
+            }
+        }
+    }
+
+    // attn = softmax(score)
+    OP::masked_softmax(att_scores);
+    let _att_scores = unsafe {
+        att_scores.data_mut()
+    };
+
+    // hidden_states = attn @ V
+    let mut _hidden_states = unsafe { hidden_states.data_mut() };
+    let _v = v.data();
+
+    for s in 0..seq_len {
+        for g in 0..n_groups {
+            let q_head = g;
+            let q_start = q_head * dqkv;
+            let q_end = q_start + dqkv;
+
+            // 初始化 sum 为 dqkv 维向量
+            let mut sum = vec![0.0; dqkv];
+
+            for t in 0..total_seq_len {
+                for kv_head in 0..n_kv_h {
+                    let kv_start = kv_head * dqkv;
+                    let kv_end = kv_start + dqkv;
+                    let kv_vec = &_v[t * kv_cols + kv_start..t * kv_cols + kv_end];
+
+                    let score = _att_scores[kv_head * (n_groups * seq_len * total_seq_len) 
+                                            + g * (seq_len * total_seq_len) 
+                                            + s * total_seq_len 
+                                            + t];
+
+                    // 对 dqkv 维度进行加权求和
+                    for i in 0..dqkv {
+                        sum[i] += score * kv_vec[i];
+                    }
+                }
+            }
+
+            // 赋值到 hidden_states
+            _hidden_states[s * q_cols + q_start..s * q_cols + q_end].copy_from_slice(&sum);
+        }
+    }
+
+    // todo!("Implement self_attention");
 }
 
 fn mlp(
@@ -193,7 +292,6 @@ fn mlp(
         _residual[i] += _output[i];
     }
 
-    // todo!("Implement mlp");
 }
 
 #[test]
