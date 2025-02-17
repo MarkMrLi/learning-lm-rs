@@ -74,15 +74,13 @@ pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: 
     //检查形状的一致性
     let x_shape = x.shape();
     let y_shape = y.shape();
-    let n = x_shape.last().unwrap();
-    assert_eq!(y_shape.last().unwrap() , n, "x 和 y 的最后一个维度必须相等");
-    assert_eq!(w.shape(),&[*n], "w 的维度必须和 x 的最后一个维度相等");
-    assert_eq!(&x_shape[..x_shape.len()-1], &y_shape[..y_shape.len()-1], "x和y的前导维度必须一致");
+    let dim = *(x_shape.last().unwrap());
+    // assert_eq!(x_shape , y_shape , "x 和 y 的形状相同");
+    assert_eq!(w.size(),dim, "w 的维度必须和 x 的维度相等");
 
     // 计算总向量数量（前导维度的乘积）
-    let m = x_shape.iter().take(x_shape.len()-1).product::<usize>();
-    let n = *n;
-
+    let m = x.size() / dim;
+    
     // 获取底层数据指针
     let x_data = x.data();
     let w_data = w.data();
@@ -92,18 +90,19 @@ pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: 
     for i in 0..m {
         // 计算平方和
         let mut sum_sq = 0.0;
-        for j in 0..n {
-            let idx = i * n + j;
+        let idx_base = i * dim;
+        for j in 0..dim {
+            let idx = idx_base + j;
             sum_sq += x_data[idx].powi(2);
         }
         
         // 计算归一化因子
-        let mean_sq = sum_sq / n as f32;
-        let scale = 1.0 / (mean_sq + epsilon).sqrt();
+        let mean_sq = sum_sq / dim as f32;
+        let scale = 1.0 / ((mean_sq + epsilon).sqrt());
 
         // 应用公式：y_i = w_i * x_i * scale
-        for j in 0..n {
-            let idx = i * n + j;
+        for j in 0..dim {
+            let idx = idx_base + j;
             y_data[idx] = w_data[j] * x_data[idx] * scale;
         }
     }
@@ -130,7 +129,12 @@ pub fn swiglu(y: &mut Tensor<f32>, x: &Tensor<f32>) {
 
 // C = beta * C + alpha * A @ B^T
 // hint: You don't need to do an explicit transpose of B
-pub fn matmul_transb(c: &mut Tensor<f32>, beta: f32, a: &Tensor<f32>, b: &Tensor<f32>, alpha: f32) {
+pub fn matmul_transb(
+    c: &mut Tensor<f32>, 
+    beta: f32, 
+    a: &Tensor<f32>, 
+    b: &Tensor<f32>, 
+    alpha: f32) {
     let a_shape = a.shape();
     let b_shape = b.shape();
     let c_shape = c.shape();

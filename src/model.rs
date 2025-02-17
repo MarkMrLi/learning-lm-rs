@@ -1,7 +1,5 @@
 use std::fs::File;
-// use std::intrinsics::sqrtf32;
 use std::vec;
-
 use crate::config::LlamaConfigJson;
 use crate::kvcache::KVCache;
 use crate::operators as OP;
@@ -90,6 +88,8 @@ impl Llama<f32> {
             OP::matmul_transb(q, 0., &hidden_states, &self.params.wq[layer], 1.0);
             OP::matmul_transb(k, 0., &hidden_states, &self.params.wk[layer], 1.0);
             OP::matmul_transb(v, 0., &hidden_states, &self.params.wv[layer], 1.0);
+
+            
             OP::rope(
                 q.reshape(&vec![seq_len, self.n_q_h, self.dqkv]),
                 past_seq_len,
@@ -103,24 +103,13 @@ impl Llama<f32> {
 
             let full_k = &mut cache.k_cache(layer, 0); // (total_seq, n_kv_h * dqkv)
             let full_v = &mut cache.v_cache(layer, 0); // (total_seq, n_kv_h * dqkv)
+            // ======== Self-Attention ========
+            self_attention(&mut hidden_states, &mut att_scores, q, full_k, full_v, self.n_kv_h, n_groups, seq_len, total_seq_len, self.dqkv);
+            
+            // ======== out = attn_V @ O_weight.T ，residual = out + residual ========
+            OP::matmul_transb(&mut residual, 1f32, &hidden_states, &self.params.wo[layer], 1.0);
 
-            self_attention(&mut hidden_states, &mut att_scores, q, &full_k, &full_v, self.n_kv_h, n_groups, seq_len, total_seq_len, self.dqkv);
-            // todo!("self_attention(...)");
-
-            //out = attn_V @ O_weight.T
-
-            OP::matmul_transb(&mut q_buf, 0., &hidden_states, &self.params.wo[layer], 1.0);
-
-            //residual = out + residual
-
-            let _residual = unsafe { residual.data_mut() };
-            let _q_buf = q_buf.data();
-            for i in 0..seq_len * self.d {
-                _residual[i] += _q_buf[i];
-            }
-            // todo!("down_proj matmul and add residual");
-
-            //MLP
+            // ======== MLP ========
             mlp(
                 &mut residual,
                 &mut hidden_states,
@@ -132,7 +121,6 @@ impl Llama<f32> {
                 &self.params.rms_ffn_w[layer],
                 self.eps,
             );
-            // todo!("mlp(...)");
         }
 
         // No matter what seq_len, the output is always a 1D vector of length vocab,
@@ -160,16 +148,36 @@ impl Llama<f32> {
         top_p: f32,
         top_k: u32,
         temperature: f32,
-    ) -> Vec<u32>{
-        let mut result = Vec::<u32>::new();
-
-        let mut input = Tensor::<u32>::new(token_ids.to_vec(), &vec![token_ids.len()]);
-        let mut kvcache = self.new_cache();
-        self.forward(&input, &mut kvcache);
-        todo!("实现文本生成");
-        
+    ) -> Vec<u32> {
+        let mut result = token_ids.to_vec(); // 结果列表，初始化为 token_ids
+        let mut kvcache = self.new_cache(); // 初始化 KVCache
+    
+        while result.len() < max_len { // 避免超过 max_len
+            // 生成输入 token：第一步使用 token_ids，之后每次只输入上一个 token
+            let input_tokens = if result.len() == token_ids.len() {
+                token_ids.to_vec() // 初始 prompt 作为输入
+            } else {
+                vec![*result.last().unwrap()] // 之后每次只输入上一个 token
+            };
+            let len = input_tokens.len();
+            let mut input = Tensor::<u32>::new(input_tokens, &vec![len]);
+    
+            // 执行前向计算
+            let logits = self.forward(&input, &mut kvcache);
+            
+            // 采样得到新 token
+            let id = OP::random_sample(&logits, top_p, top_k, temperature);
+            result.push(id);
+    
+            // 终止条件：如果生成了 EOS（假设 EOS = 0）
+            if id == self.eos_token_id { 
+                break;
+            }
+        }
+    
         result
     }
+    
 }
 
 fn self_attention(
@@ -179,7 +187,7 @@ fn self_attention(
     k: &Tensor<f32>,                 // (total_seq, n_kv_h * dqkv)
     v: &Tensor<f32>,                 // (total_seq, n_kv_h * dqkv)
     n_kv_h: usize,
-    n_groups: usize,
+    n_groups: usize,                // n_q_h = n_kv_h * n_groups
     seq_len: usize,
     total_seq_len: usize,
     dqkv: usize,
@@ -190,7 +198,7 @@ fn self_attention(
 
     let q_cols = n_kv_h * n_groups * dqkv;
 
-    // score = Q @ K.T / sqrt(dim) 计算注意力分数
+    // ======== Step 1 : score = Q @ K.T / sqrt(dim) 计算注意力分数 ========
     let kv_cols = n_kv_h * dqkv;
     {
         let _att_scores = unsafe {
@@ -200,9 +208,7 @@ fn self_attention(
         for kv_head in 0..n_kv_h {
             // 每个KV头对应的Q头组（包含n_groups个Q头）
             let q_head_start = kv_head * n_groups;
-            let q_head_end = q_head_start + n_groups;
-
-            
+   
             // 计算注意力分数
             for s in 0..seq_len {
                 for g in 0..n_groups {
@@ -234,50 +240,42 @@ fn self_attention(
                 }
             }
         }
+        
     }
 
-    // attn = softmax(score)
+    // ======== Step 2: attn = softmax(score) ========
     OP::masked_softmax(att_scores);
-    let _att_scores = unsafe {
-        att_scores.data_mut()
-    };
-
-    // hidden_states = attn @ V
+    
+    // ======== Step 3: hidden_states = attn @ V ========
+    let _att_scores = att_scores.data();
     let mut _hidden_states = unsafe { hidden_states.data_mut() };
+    _hidden_states.fill(0f32);
     let _v = v.data();
 
-    for s in 0..seq_len {
-        for g in 0..n_groups {
-            let q_head = g;
-            let q_start = q_head * dqkv;
-            let q_end = q_start + dqkv;
+    for kv_head in 0..n_kv_h {
+        for v_id in 0..total_seq_len {
+            // 优先确定V的位置，避免重复计算，减少内存访问
+            let v_start = kv_head * dqkv;
+            let v_end = v_start + dqkv;
+            let v_vec = &_v[v_id * kv_cols + v_start..v_id * kv_cols + v_end];
 
-            // 初始化 sum 为 dqkv 维向量
-            let mut sum = vec![0.0; dqkv];
+            for g in 0..n_groups {
+                let q_head = kv_head * n_groups + g;
+                let q_start = q_head * dqkv;
 
-            for t in 0..total_seq_len {
-                for kv_head in 0..n_kv_h {
-                    let kv_start = kv_head * dqkv;
-                    let kv_end = kv_start + dqkv;
-                    let kv_vec = &_v[t * kv_cols + kv_start..t * kv_cols + kv_end];
-
+                for s in 0..seq_len {
                     let score = _att_scores[kv_head * (n_groups * seq_len * total_seq_len) 
                                             + g * (seq_len * total_seq_len) 
                                             + s * total_seq_len 
-                                            + t];
-
-                    // 对 dqkv 维度进行加权求和
+                                            + v_id];
+                    let out_start = s * q_cols + q_start;
                     for i in 0..dqkv {
-                        sum[i] += score * kv_vec[i];
+                        _hidden_states[out_start + i] += score * v_vec[i];
                     }
                 }
             }
-
-            // 赋值到 hidden_states
-            _hidden_states[s * q_cols + q_start..s * q_cols + q_end].copy_from_slice(&sum);
         }
     }
-
     // todo!("Implement self_attention");
 }
 
@@ -293,29 +291,20 @@ fn mlp(
     eps: f32,
 ) {
     //RMS 归一化
-    rms_norm(hidden_states, residual, rms_w, eps);
+    rms_norm(hidden_states, residual, &rms_w, eps);
 
     // Compute gate = hidden_states @ w_gate.T
-    matmul_transb(gate, 0., hidden_states, w_gate, 1.0);
+    matmul_transb(gate, 0., &hidden_states, w_gate, 1.0);
 
     // Step 3: Compute up = hidden_states @ w_up.T
-    matmul_transb(up, 0., hidden_states, w_up, 1.0);
+    matmul_transb(up, 0., &hidden_states, w_up, 1.0);
 
     // Step 4: Compute act = gate * sigmoid(gate) * up using SwiGLU
     // Calculate sigmoid of gate into a temporary tensor
-    swiglu(gate, up);
-
-    matmul_transb(hidden_states, 0., gate, w_down, 1.0);
-
+    // 这里是SiLU（gate）
+    swiglu(up, &gate);
     //Step 5: residual = hidden_states + residual
-    let len = residual.size();
-    let mut _residual = unsafe{residual.data_mut()};
-    let _output = hidden_states.data();
-    assert_eq!(len,hidden_states.size(),"output.shape != residual.shape");
-    for i in 0..len {
-        _residual[i] += _output[i];
-    }
-
+    matmul_transb(residual, 1f32, &up, &w_down, 1f32);
 }
 
 #[test]
