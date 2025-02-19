@@ -149,18 +149,18 @@ impl Llama<f32> {
         top_k: u32,
         temperature: f32,
     ) -> Vec<u32> {
-        let mut result = token_ids.to_vec(); // 结果列表，初始化为 token_ids
+        let mut result = vec![]; // 结果列表，初始化为 token_ids
         let mut kvcache = self.new_cache(); // 初始化 KVCache
     
         while result.len() < max_len { // 避免超过 max_len
             // 生成输入 token：第一步使用 token_ids，之后每次只输入上一个 token
-            let input_tokens = if result.len() == token_ids.len() {
+            let input_tokens = if result.len() == 0 {
                 token_ids.to_vec() // 初始 prompt 作为输入
             } else {
                 vec![*result.last().unwrap()] // 之后每次只输入上一个 token
             };
             let len = input_tokens.len();
-            let mut input = Tensor::<u32>::new(input_tokens, &vec![len]);
+            let input = Tensor::<u32>::new(input_tokens, &vec![len]);
     
             // 执行前向计算
             let logits = self.forward(&input, &mut kvcache);
