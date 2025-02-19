@@ -73,7 +73,6 @@ pub fn masked_softmax(y: &mut Tensor<f32>) {
 pub fn rms_norm(y: &mut Tensor<f32>, x: &Tensor<f32>, w: &Tensor<f32>, epsilon: f32) {
     //检查形状的一致性
     let x_shape = x.shape();
-    let y_shape = y.shape();
     let dim = *(x_shape.last().unwrap());
     // assert_eq!(x_shape , y_shape , "x 和 y 的形状相同");
     assert_eq!(w.size(),dim, "w 的维度必须和 x 的维度相等");
@@ -137,7 +136,6 @@ pub fn matmul_transb(
     alpha: f32) {
     let a_shape = a.shape();
     let b_shape = b.shape();
-    let c_shape = c.shape();
     let m = a_shape.first().unwrap();
     let n = b_shape.first().unwrap();
     
