@@ -8,21 +8,17 @@ mod model;
 mod operators;
 mod params;
 mod tensor;
+mod chat;
 
 fn main() {
     // 获取用户输入来选择模型
     let model_type = get_user_choice();
 
-    // 根据选择加载模型
-    let (llama, tokenizer) = get_model_params(&model_type);
-
     if model_type == "story" {
-        story_model(llama, tokenizer);
+        story_model();
     } else {
-        chat_model(llama, tokenizer);
+        chat_model();
     }
-
-
 }
 
 fn get_user_choice() -> String {
@@ -43,17 +39,13 @@ fn get_user_choice() -> String {
     }
 }
 
-fn get_model_params(name: &str) -> (model::Llama::<f32>, Tokenizer) {
-    let project_dir = env!("CARGO_MANIFEST_DIR");
-    let model_dir = PathBuf::from(project_dir).join("models").join(name);
-    let llama = model::Llama::<f32>::from_safetensors(&model_dir);
-    let tokenizer = Tokenizer::from_file(model_dir.join("tokenizer.json")).unwrap();
-
-    (llama, tokenizer)
-}
 
 // ======== Story Model ========
-fn story_model(llama : model::Llama<f32>, tokenizer : Tokenizer) {
+fn story_model() {
+    let project_dir = env!("CARGO_MANIFEST_DIR");
+    let model_dir = PathBuf::from(project_dir).join("models").join("story");
+    let llama = model::Llama::<f32>::from_safetensors(&model_dir);
+    let tokenizer = Tokenizer::from_file(model_dir.join("tokenizer.json")).unwrap();
     // 在这里可以定义有关故事模型的特定操作
     let input = "Once upon a time";
     let binding = tokenizer.encode(input, true).unwrap();
@@ -73,45 +65,8 @@ fn story_model(llama : model::Llama<f32>, tokenizer : Tokenizer) {
 }
 
 // ======== Chat Model ========
-fn chat_model(llama : model::Llama<f32>, tokenizer : Tokenizer) {
-    println!("Welcome to the chat model! Type 'exit' to quit.");
-    while true {
-        print!("You: ");
-        io::stdout().flush().unwrap();
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-
-        if input.trim() == "exit" {
-            println!("Goodbye!");
-            break;
-        }
-
-        let input = create_prompt(input);
-        // println!("Prompt: {}", input);
-        // std::process::exit(0);
-        let binding = tokenizer.encode(input, true).unwrap();
-        let input_ids = binding.get_ids();
-
-        // 调用生成函数
-        let output_ids = llama.generate(
-            input_ids,
-            100,
-            0.8,
-            4,
-            1.,
-        );
-
-        let output = tokenizer.decode(&output_ids, true).unwrap();
-        println!("Bot: {}", output);
-
-    }
+fn chat_model() {
+    let chat_bot = chat::ChatModel::new();
+    chat_bot.begin();
     // 在这里可以定义有关聊天模型的特定操作
-}
-
-fn create_prompt(input :String) -> String {
-    let mut prompt = String::from("<|im_start|>User\n");
-    prompt.push_str(&input);
-    prompt.push_str(&String::from("<|im_end|> <|im_start|>Assistant\n"));
-    prompt
-    
 }
