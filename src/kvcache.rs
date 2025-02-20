@@ -40,4 +40,17 @@ impl<T: Default + Copy> KVCache<T> {
     pub fn len(&self) -> usize {
         self.length
     }
+
+    // 回滚方法
+    pub fn rollback(&mut self, sub_length: usize) {
+        assert!(sub_length <= self.length);
+
+        let new_length = self.length - sub_length;
+        self.length = new_length;
+
+        // 清除超出当前长度的数据
+        self.k_cache.truncate(new_length);
+        self.v_cache.truncate(new_length);
+
+    }
 }
