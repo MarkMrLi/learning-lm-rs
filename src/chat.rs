@@ -89,6 +89,10 @@ impl ChatModel {
     fn new_session(&self) {
         // 调用生成函数
         // ...
+        let mut session = Session {
+            history: Vec::new(),
+            kvcache: self.model.new_cache(),
+        };
         println!("Hello, I am a chatbot");
         loop {
             print!("You: ");
@@ -106,12 +110,13 @@ impl ChatModel {
             let input_ids = binding.get_ids();
     
             // 调用生成函数
-            let output_ids = self.model.generate(
+            let output_ids = self.model.chat_generator(
                 input_ids,
                 100,
                 0.8,
                 4,
                 1.,
+                &mut session.kvcache,
             );
     
             let output = self.tokenizer.decode(&output_ids, true).unwrap();
