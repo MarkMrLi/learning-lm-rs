@@ -66,7 +66,7 @@ fn story_model() {
 
 // ======== Chat Model ========
 fn chat_model() {
-    let chat_bot = chat::ChatModel::new();
+    let mut chat_bot = chat::ChatModel::new();
     chat_bot.begin();
     // 在这里可以定义有关聊天模型的特定操作
 }
