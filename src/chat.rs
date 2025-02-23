@@ -54,7 +54,7 @@ impl ChatModel {
             model,
             tokenizer: Tokenizer::from_file(model_dir.join("tokenizer.json")).unwrap(),
             sessions: Vec::new(),
-            system_prompt: "You are a helpful assistant".to_string(),
+            system_prompt: "You are a chatbot".to_string(),
         }
     }
     pub fn begin(&mut self) {
@@ -103,7 +103,6 @@ impl ChatModel {
             } else {
                 println!("Welcome back to the conversation");
                 for (_, conversation) in &session.history {
-                    // todo!("历史信息展示错误修复");
                     println!("User: {}", conversation.input);
                     println!("Assistant: {}", conversation.output);
                 }
@@ -120,21 +119,22 @@ impl ChatModel {
                 break;
             }
     
-            let format_input = self.format_prompt(input.clone());
-            let binding = self.tokenizer.encode(format_input.clone(), true).unwrap();
-            let input_ids = binding.get_ids();
-
+            let mut format_input = self.format_prompt(input.clone());
             let session = self.sessions.get_mut(session_id).unwrap();
             if session.history.is_empty() {
                 session.title = input.clone();
+                // format_input = format!("<|im_start|>system\n{}<|im_end|>\n{}",self.system_prompt, format_input);
             }
+
+            let binding = self.tokenizer.encode(format_input.clone(), true).unwrap();
+            let input_ids = binding.get_ids();
 
             // 调用生成函数
             let output_ids = self.model.chat_generator(
                 input_ids,
-                100,
+                500,
                 0.8,
-                5,
+                20,
                 1.,
                 &mut session.kvcache,
             );
@@ -145,8 +145,6 @@ impl ChatModel {
                 output: output.clone(),
             };
             session.history.push((input_ids.len() + output_ids.len() , conversation));
-            println!("input : {}", input);
-            println!("output : {}", output);
             println!("Assistant: {}", output);
         }
     }
