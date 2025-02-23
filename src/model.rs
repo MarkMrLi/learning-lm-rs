@@ -187,7 +187,7 @@ impl Llama<f32> {
     ) -> Vec<u32> {
         let mut result = vec![]; // 结果列表，初始化为 token_ids
     
-        while result.len() < max_len { // 避免超过 max_len
+        while result.len() <= max_len { // 避免超过 max_len
             // 生成输入 token：第一步使用 token_ids，之后每次只输入上一个 token
             let input_tokens = if result.len() == 0 {
                 token_ids.to_vec() // 初始 prompt 作为输入
@@ -209,6 +209,7 @@ impl Llama<f32> {
                 break;
             }
         }
+        result.pop(); // 去掉 EOS
         result        
         // todo!("Add new function to attach the model to the chatbot");
     }

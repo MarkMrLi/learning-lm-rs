@@ -98,14 +98,25 @@ impl ChatModel {
         {
             let session = self.sessions.get_mut(session_id).unwrap();
             
+            // 显示欢迎信息
             if session.history.is_empty() {
+                println!("-----------------------------------------");
+                println!("                欢迎！                  ");
+                println!("请输入任意内容与我聊天，或输入以下命令：");
+                println!("  - 'exit'        ：退出程序");
+                println!("  - 'rollback'    ：撤回上一次对话");
+                println!("-----------------------------------------");
                 println!("Hello, I am a chatbot");
             } else {
-                println!("Welcome back to the conversation");
-                for (_, conversation) in &session.history {
+                println!("-----------------------------------------");
+                println!("欢迎回来！以下是之前的对话记录：");
+                for (i, (_, conversation)) in session.history.iter().enumerate() {
+                    println!("对话 {}:", i + 1);
                     println!("User: {}", conversation.input);
                     println!("Assistant: {}", conversation.output);
                 }
+                println!("-----------------------------------------");
+                println!("Welcome back to the conversation");
             }
         }
         loop {
@@ -117,6 +128,13 @@ impl ChatModel {
             if input.trim() == "exit" {
                 println!("Goodbye!");
                 break;
+            }else if input.trim() == "rollback" {
+                println!("Rolling back to the previous conversation...");
+
+                self.roll_back(session_id);
+                // 回滚到上一次的对话
+                // ...
+                continue;
             }
     
             let mut format_input = self.format_prompt(input.clone());
@@ -132,7 +150,7 @@ impl ChatModel {
             // 调用生成函数
             let output_ids = self.model.chat_generator(
                 input_ids,
-                500,
+                300,
                 0.8,
                 20,
                 1.,
@@ -199,7 +217,21 @@ impl ChatModel {
             }
         }
     }
-
+    fn roll_back(&mut self, session_id: usize) {
+        // 回滚到上一次的对话
+        // ...
+        let session = self.sessions.get_mut(session_id).unwrap();
+        if session.history.len() > 0 {
+            let (kv_count,_) = session.history.pop().unwrap();
+            session.kvcache.rollback(kv_count);
+        } else {
+            println!("No more history to rollback to");
+        }
+        for (_, conversation) in &session.history {
+            println!("User: {}", conversation.input);
+            println!("Assistant: {}", conversation.output);
+        }
+    }
     fn format_prompt(&self, user_input: String) -> String {
         // 实现聊天专用的prompt格式
         let mut prompt = String::from("<|im_start|>user\n");

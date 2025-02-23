@@ -48,9 +48,5 @@ impl<T: Default + Copy> KVCache<T> {
         let new_length = self.length - sub_length;
         self.length = new_length;
 
-        // 清除超出当前长度的数据
-        self.k_cache.truncate(new_length);
-        self.v_cache.truncate(new_length);
-
     }
 }
