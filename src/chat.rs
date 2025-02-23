@@ -103,7 +103,7 @@ impl ChatModel {
             } else {
                 println!("Welcome back to the conversation");
                 for (_, conversation) in &session.history {
-                    todo!("历史信息展示错误修复");
+                    // todo!("历史信息展示错误修复");
                     println!("User: {}", conversation.input);
                     println!("Assistant: {}", conversation.output);
                 }
@@ -126,7 +126,7 @@ impl ChatModel {
 
             let session = self.sessions.get_mut(session_id).unwrap();
             if session.history.is_empty() {
-                session.title = format_input.clone();
+                session.title = input.clone();
             }
 
             // 调用生成函数
@@ -134,17 +134,19 @@ impl ChatModel {
                 input_ids,
                 100,
                 0.8,
-                4,
+                5,
                 1.,
                 &mut session.kvcache,
             );
             
             let output = self.tokenizer.decode(&output_ids, true).unwrap();
             let conversation = Conversation {
-                input: input,
+                input: input.clone(),
                 output: output.clone(),
             };
             session.history.push((input_ids.len() + output_ids.len() , conversation));
+            println!("input : {}", input);
+            println!("output : {}", output);
             println!("Assistant: {}", output);
         }
     }
@@ -167,7 +169,7 @@ impl ChatModel {
         loop {
             println!("Choose a session to view:");
             for (i, session) in self.sessions.iter().enumerate() {
-                println!("{}. Session {}", i + 1, session.title);
+                println!("{}. Session :{}", i + 1, session.title);
             }
             println!("Type 'exit' to return to the previous menu");
             print!("Enter your choice: ");
@@ -202,9 +204,9 @@ impl ChatModel {
 
     fn format_prompt(&self, user_input: String) -> String {
         // 实现聊天专用的prompt格式
-        let mut prompt = String::from("<|im_start|>User ");
+        let mut prompt = String::from("<|im_start|>user\n");
         prompt.push_str(&user_input);
-        prompt.push_str(&String::from("<|im_end|>\n<|im_start|>Assistant "));
+        prompt.push_str(&String::from("<|im_end|>\n<|im_start|>assistant\n"));
         prompt
     }
 
