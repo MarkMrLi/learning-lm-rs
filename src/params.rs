@@ -1,6 +1,28 @@
 use crate::config::LlamaConfigJson;
 use crate::tensor::Tensor;
 use safetensors::SafeTensors;
+use bytemuck::{Pod, Zeroable, try_from_bytes};
+use half::{bf16,f16};
+use std::mem;
+
+pub trait FromLeBytes: Sized {
+    fn from_le_bytes(bytes: &[u8]) -> Self;
+}
+impl FromLeBytes for f32 {
+    fn from_le_bytes(bytes: &[u8]) -> Self {
+        f32::from_le_bytes(bytes.try_into().expect("Invalid byte length for f32"))
+    }
+}
+impl FromLeBytes for f16 {
+    fn from_le_bytes(bytes: &[u8]) -> Self {
+        f16::from_le_bytes([bytes[0], bytes[1]])
+    }
+}
+impl FromLeBytes for bf16 {
+    fn from_le_bytes(bytes: &[u8]) -> Self {
+        bf16::from_le_bytes([bytes[0], bytes[1]])
+    }
+}
 pub struct LLamaParams<T> {
     // token_id to embedding lookup table
     pub embedding_table: Tensor<T>, // (vocab_size, dim)
@@ -20,24 +42,30 @@ pub struct LLamaParams<T> {
     pub lm_head: Tensor<T>,   // (vocab_size, dim)
 }
 
-impl LLamaParams<f32> {
+impl<T: Pod + Zeroable + Default + FromLeBytes> LLamaParams<T> {
     pub fn from_safetensors(safetensor: &SafeTensors, config: &LlamaConfigJson) -> Self {
-        let get_tensor = |name: &str| -> Tensor<f32> {
+        let get_tensor = |name: &str| -> Tensor<T> {
             
             let tensor = safetensor
                 .tensor(name)
                 .unwrap_or_else(|_| panic!("Tensor {} not found", name));
-
-            // 字节转f32处理
-            let data_bytes = tensor.data();
-            let data_f32: &[f32] = unsafe {
-                std::slice::from_raw_parts(
-                    data_bytes.as_ptr() as *const f32,
-                    data_bytes.len() / std::mem::size_of::<f32>(),
-                )
+            let tensor_dtype = tensor.dtype();
+            let element_size = match tensor_dtype {
+                safetensors::Dtype::F32 => mem::size_of::<f32>(),
+                safetensors::Dtype::F16 => mem::size_of::<f16>(),
+                safetensors::Dtype::BF16 => mem::size_of::<bf16>(),
+                _ => panic!("Unsupported data type: {:?}", tensor_dtype),
             };
+            
+            let data_bytes = tensor.data();
             let shape = tensor.shape().to_vec();
-            Tensor::new(data_f32.to_vec(), &shape)
+            // 将字节数组解析为指定的数据类型
+            let data = data_bytes
+                .chunks_exact(element_size)
+                .map(|chunk| T::from_le_bytes(chunk.try_into().unwrap()))
+                .collect::<Vec<T>>();
+            
+            Tensor::new(data, &shape)
         };
 
 
