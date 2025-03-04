@@ -10,7 +10,7 @@ pub struct KVCache<T> {
     length: usize, // length of the current sequence
 }
 
-impl<T: Default + Copy> KVCache<T> {
+impl<T: Default + Copy + 'static> KVCache<T> {
     pub fn new(n_layers: usize, max_seq_len: usize, dim: usize, init_len: usize) -> Self {
         KVCache {
             k_cache: (0..n_layers)

@@ -42,7 +42,7 @@ pub struct LLamaParams<T> {
     pub lm_head: Tensor<T>,   // (vocab_size, dim)
 }
 
-impl<T: Pod + Zeroable + Default + FromLeBytes> LLamaParams<T> {
+impl<T: Copy + Default + FromLeBytes + 'static> LLamaParams<T> {
     pub fn from_safetensors(safetensor: &SafeTensors, config: &LlamaConfigJson) -> Self {
         let get_tensor = |name: &str| -> Tensor<T> {
             
