@@ -1,13 +1,17 @@
 use std::fs::File;
+use std::ops::{Add, AddAssign, MulAssign};
 use std::vec;
-use crate::config::LlamaConfigJson;
+use crate::{config::LlamaConfigJson, params::FromLeBytes};
 use crate::kvcache::KVCache;
 use crate::operators as OP;
 use crate::params::LLamaParams;
-use crate::tensor::Tensor;
+use crate::tensor::{FloatConvert, Tensor};
 use crate::operators::*;
 use safetensors::SafeTensors;
 use std::path::Path;
+use std::iter::Sum;
+use num_traits::{Float};
+
 
 pub struct Llama<T> {
     vocab: usize,           // vocab size
@@ -25,7 +29,7 @@ pub struct Llama<T> {
     eos_token_id: u32,      // end token id
 }
 
-impl Llama<f32> {
+impl <T: Default + Copy + Sum + Float + FromLeBytes + Clone + FloatConvert + AddAssign + MulAssign +'static> Llama<T> {
     pub fn from_safetensors(model_dir: impl AsRef<Path>) -> Self {
         let config = File::open(model_dir.as_ref().join("config.json")).unwrap();
         let config: LlamaConfigJson = serde_json::from_reader(config).unwrap();
@@ -50,11 +54,11 @@ impl Llama<f32> {
         }
     }
 
-    pub fn new_cache(&self) -> KVCache<f32> {
+    pub fn new_cache(&self) -> KVCache<T> {
         KVCache::new(self.n_layers, self.max_seq_len, self.n_kv_h * self.dqkv, 0)
     }
 
-    pub fn forward(&self, input: &Tensor<u32>, cache: &mut KVCache<f32>) -> Tensor<f32> {
+    pub fn forward(&self, input: &Tensor<u32>, cache: &mut KVCache<T>) -> Tensor<T> {
         let seq_len = input.size();
         let past_seq_len = cache.len();
         cache.increment(seq_len);
@@ -62,18 +66,17 @@ impl Llama<f32> {
         let n_groups = self.n_q_h / self.n_kv_h;
 
         // Some pre-allocated buffers that will be reused
-        let mut residual = Tensor::<f32>::default(&vec![seq_len, self.d]);
-        let mut hidden_states = Tensor::<f32>::default(&vec![seq_len, self.d]);
-        let mut q_buf = Tensor::<f32>::default(&vec![seq_len, self.n_q_h * self.dqkv]);
+        let mut residual = Tensor::<T>::default(&vec![seq_len, self.d]);
+        let mut hidden_states = Tensor::<T>::default(&vec![seq_len, self.d]);
+        let mut q_buf = Tensor::<T>::default(&vec![seq_len, self.n_q_h * self.dqkv]);
         let mut att_scores =
-            Tensor::<f32>::default(&vec![self.n_kv_h, n_groups, seq_len, total_seq_len]);
-        let mut gate_buf = Tensor::<f32>::default(&vec![seq_len, self.di]);
-        let mut up_buf = Tensor::<f32>::default(&vec![seq_len, self.di]);
+            Tensor::<T>::default(&vec![self.n_kv_h, n_groups, seq_len, total_seq_len]);
+        let mut gate_buf = Tensor::<T>::default(&vec![seq_len, self.di]);
+        let mut up_buf = Tensor::<T>::default(&vec![seq_len, self.di]);
 
         // Computation Starts Here
         // Embedding lookup
         OP::gather(&mut residual, input, &self.params.embedding_table);
-
         for layer in 0..self.n_layers {
             OP::rms_norm(
                 &mut hidden_states,
@@ -85,9 +88,9 @@ impl Llama<f32> {
             let q = (&mut q_buf).reshape(&vec![seq_len, self.n_q_h * self.dqkv]); // (seq, n_h * dqkv)
             let k = &mut cache.k_cache(layer, past_seq_len); // (seq, n_kv_h * dqkv)
             let v = &mut cache.v_cache(layer, past_seq_len); // (seq, n_kv_h * dqkv)
-            OP::matmul_transb(q, 0., &hidden_states, &self.params.wq[layer], 1.0);
-            OP::matmul_transb(k, 0., &hidden_states, &self.params.wk[layer], 1.0);
-            OP::matmul_transb(v, 0., &hidden_states, &self.params.wv[layer], 1.0);
+            OP::matmul_transb(q, T::from_f32(0f32), &hidden_states, &self.params.wq[layer], T::from_f32(1f32));
+            OP::matmul_transb(k, T::from_f32(0f32), &hidden_states, &self.params.wk[layer], T::from_f32(1f32));
+            OP::matmul_transb(v, T::from_f32(0f32), &hidden_states, &self.params.wv[layer], T::from_f32(1f32));
 
             
             OP::rope(
@@ -107,7 +110,7 @@ impl Llama<f32> {
             self_attention(&mut hidden_states, &mut att_scores, q, full_k, full_v, self.n_kv_h, n_groups, seq_len, total_seq_len, self.dqkv);
             
             // ======== out = attn_V @ O_weight.T ，residual = out + residual ========
-            OP::matmul_transb(&mut residual, 1f32, &hidden_states, &self.params.wo[layer], 1.0);
+            OP::matmul_transb(&mut residual, T::from_f32(1f32), &hidden_states, &self.params.wo[layer], T::from_f32(1f32));
 
             // ======== MLP ========
             mlp(
@@ -125,7 +128,7 @@ impl Llama<f32> {
 
         // No matter what seq_len, the output is always a 1D vector of length vocab,
         // which contains the probabilities for the next token.
-        let mut logits = Tensor::<f32>::default(&vec![1, self.vocab]);
+        let mut logits = Tensor::<T>::default(&vec![1, self.vocab]);
         let mut hidden_states = hidden_states.slice((seq_len - 1) * self.d, &vec![1, self.d]);
         let residual = residual.slice((seq_len - 1) * self.d, &vec![self.d]);
 
@@ -136,7 +139,7 @@ impl Llama<f32> {
             self.eps,
         );
 
-        OP::matmul_transb(&mut logits, 0., &hidden_states, &self.params.lm_head, 1.0);
+        OP::matmul_transb(&mut logits, T::from_f32(0.), &hidden_states, &self.params.lm_head, T::from_f32(1.0));
 
         logits
     }
@@ -174,6 +177,7 @@ impl Llama<f32> {
                 break;
             }
         }
+        result.pop();
         result
     }
     pub fn chat_generator(
@@ -183,7 +187,7 @@ impl Llama<f32> {
         top_p: f32,
         top_k: u32,
         temperature: f32,
-        kvcache: &mut KVCache<f32>,
+        kvcache: &mut KVCache<T>,
     ) -> Vec<u32> {
         let mut result = vec![]; // 结果列表，初始化为 token_ids
     
@@ -218,12 +222,12 @@ impl Llama<f32> {
 
 
 
-fn self_attention(
-    hidden_states: &mut Tensor<f32>, // (seq, n_kv_h * n_groups * dqkv)
-    att_scores: &mut Tensor<f32>,    // (n_kv_h, n_groups, seq, total_seq)
-    q: &Tensor<f32>,                 // (seq, n_kv_h * n_groups * dqkv)
-    k: &Tensor<f32>,                 // (total_seq, n_kv_h * dqkv)
-    v: &Tensor<f32>,                 // (total_seq, n_kv_h * dqkv)
+fn self_attention<T: Default + Copy + Float + FloatConvert + MulAssign + AddAssign + 'static>(
+    hidden_states: &mut Tensor<T>, // (seq, n_kv_h * n_groups * dqkv)
+    att_scores: &mut Tensor<T>,    // (n_kv_h, n_groups, seq, total_seq)
+    q: &Tensor<T>,                 // (seq, n_kv_h * n_groups * dqkv)
+    k: &Tensor<T>,                 // (total_seq, n_kv_h * dqkv)
+    v: &Tensor<T>,                 // (total_seq, n_kv_h * dqkv)
     n_kv_h: usize,
     n_groups: usize,                // n_q_h = n_kv_h * n_groups
     seq_len: usize,
@@ -268,12 +272,12 @@ fn self_attention(
                         // 手动计算点积
                         let mut dot = 0.0;
                         for i in 0..dqkv {
-                            dot += q_vec[i] * k_vec[i];
+                            dot += <T as FloatConvert>::to_f32(q_vec[i]) * <T as FloatConvert>::to_f32(k_vec[i]);
                         }
                         _att_scores[kv_head * (n_groups * seq_len * total_seq_len) 
                                         + g * (seq_len * total_seq_len) 
                                         + s * total_seq_len 
-                                        + t] = dot / scale;
+                                        + t] = T::from_f32(dot / scale);
                     }
                 }
             }
@@ -287,7 +291,7 @@ fn self_attention(
     // ======== Step 3: hidden_states = attn @ V ========
     let _att_scores = att_scores.data();
     let mut _hidden_states = unsafe { hidden_states.data_mut() };
-    _hidden_states.fill(0f32);
+    _hidden_states.fill(T::from_f32(0.));
     let _v = v.data();
 
     for kv_head in 0..n_kv_h {
@@ -316,32 +320,32 @@ fn self_attention(
     }
 }
 
-fn mlp(
-    residual: &mut Tensor<f32>,
-    hidden_states: &mut Tensor<f32>,
-    gate: &mut Tensor<f32>,
-    up: &mut Tensor<f32>,
-    w_up: &Tensor<f32>,
-    w_down: &Tensor<f32>,
-    w_gate: &Tensor<f32>,
-    rms_w: &Tensor<f32>,
+fn mlp<T:Default + Copy + Float + FloatConvert + AddAssign + MulAssign  + 'static>(
+    residual: &mut Tensor<T>,
+    hidden_states: &mut Tensor<T>,
+    gate: &mut Tensor<T>,
+    up: &mut Tensor<T>,
+    w_up: &Tensor<T>,
+    w_down: &Tensor<T>,
+    w_gate: &Tensor<T>,
+    rms_w: &Tensor<T>,
     eps: f32,
 ) {
     //RMS 归一化
     rms_norm(hidden_states, residual, &rms_w, eps);
 
     // Compute gate = hidden_states @ w_gate.T
-    matmul_transb(gate, 0., &hidden_states, w_gate, 1.0);
+    matmul_transb(gate, T::from_f32(0.), &hidden_states, w_gate, T::from_f32(1.0));
 
     // Step 3: Compute up = hidden_states @ w_up.T
-    matmul_transb(up, 0., &hidden_states, w_up, 1.0);
+    matmul_transb(up, T::from_f32(0.), &hidden_states, w_up, T::from_f32(1.0));
 
     // Step 4: Compute act = gate * sigmoid(gate) * up using SwiGLU
     // Calculate sigmoid of gate into a temporary tensor
     // 这里是SiLU（gate）
     swiglu(up, &gate);
     //Step 5: residual = hidden_states + residual
-    matmul_transb(residual, 1f32, &up, &w_down, 1f32);
+    matmul_transb(residual, T::from_f32(1.0), &up, &w_down, T::from_f32(1.0));
 }
 
 #[test]
