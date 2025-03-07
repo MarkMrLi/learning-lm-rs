@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 use std::io::{self, Write};
 use tokenizers::Tokenizer;
-use half::f16;
+use half::{bf16,f16};
 
 mod config;
 mod kvcache;
