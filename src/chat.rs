@@ -4,6 +4,7 @@ use std::io::{self, Write};
 use std::path::PathBuf;
 use crate::model::Llama;
 use crate::kvcache::KVCache;
+use dashmap::DashMap;
 struct Conversation {
     input: String,
     output: String,
@@ -16,7 +17,16 @@ struct Session{
     // 会话缓存
     kvcache: KVCache<f32>,
 }
+struct  Uuid {
+    user_id: String,
+}
+struct ChatEngine {
+    // 模型参数
+    model : Llama<f32>,
+    tokenizer : Tokenizer,
+    sessions: DashMap<Uuid, Session> // ✅ 并发安全
 
+}
 pub struct ChatModel {
     // 模型参数
     model : Llama<f32>,
@@ -31,7 +41,7 @@ pub struct ChatModel {
 /* 
     聊天模型的实现
         外部接口
-            1. 实现ChatModel::new方法，用于初始化聊天模型
+            1. 实现ChatModel::new方法，用于初始化聊天模型 
             2. generator trait实现
             3. 实现ChatModel::process_history方法，用于处理对话历史，会话回滚
             4. 实现会话切换，多会话管理
@@ -137,7 +147,7 @@ impl ChatModel {
                 continue;
             }
     
-            let mut format_input = self.format_prompt(input.clone());
+            let mut format_input = format_prompt(input.clone());
             let session = self.sessions.get_mut(session_id).unwrap();
             if session.history.is_empty() {
                 session.title = input.clone();
@@ -232,12 +242,16 @@ impl ChatModel {
             println!("Assistant: {}", conversation.output);
         }
     }
-    fn format_prompt(&self, user_input: String) -> String {
-        // 实现聊天专用的prompt格式
-        let mut prompt = String::from("<|im_start|>user\n");
-        prompt.push_str(&user_input);
-        prompt.push_str(&String::from("<|im_end|>\n<|im_start|>assistant\n"));
-        prompt
-    }
 
+
+}
+fn format_prompt( user_input: String) -> String {
+    // 实现聊天专用的prompt格式
+    let mut prompt = String::from("<|im_start|>user\n");
+    prompt.push_str(&user_input);
+    prompt.push_str(&String::from("<|im_end|>\n<|im_start|>assistant\n"));
+    prompt
+}
+impl ChatEngine {
+    
 }

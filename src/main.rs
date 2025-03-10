@@ -1,7 +1,8 @@
 use std::path::PathBuf;
 use std::io::{self, Write};
 use tokenizers::Tokenizer;
-use half::{bf16,f16};
+use tokio::runtime::Runtime;
+// use half::{bf16,f16};
 
 mod config;
 mod kvcache;
@@ -10,6 +11,7 @@ mod operators;
 mod params;
 mod tensor;
 mod chat;
+mod server;
 
 fn main() {
     // 获取用户输入来选择模型
@@ -17,13 +19,15 @@ fn main() {
 
     if model_type == "story" {
         story_model();
-    } else {
+    } else if model_type == "chat"{
         chat_model();
+    } else {
+        server_model();
     }
 }
 
 fn get_user_choice() -> String {
-    println!("Please choose a model (story/chat):");
+    println!("Please choose a model (story/chat/server):");
 
     let mut choice = String::new();
     io::stdout().flush().unwrap();  // Make sure the prompt is printed before user input
@@ -32,7 +36,7 @@ fn get_user_choice() -> String {
     let choice = choice.trim().to_lowercase();
 
     // 检查输入是否有效
-    if choice == "story" || choice == "chat" {
+    if choice == "story" || choice == "chat" || choice == "server"{
         return choice;
     } else {
         println!("Invalid choice. Defaulting to 'story' model.");
@@ -70,4 +74,10 @@ fn chat_model() {
     let mut chat_bot = chat::ChatModel::new();
     chat_bot.begin();
     // 在这里可以定义有关聊天模型的特定操作
+}
+
+// ======== Server Model ========
+fn server_model() {
+    let rt = Runtime::new().unwrap();
+    // rt.block_on(server::start_server());
 }
