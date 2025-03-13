@@ -1,7 +1,6 @@
-use std::ops::{Add, AddAssign, MulAssign};
+use std::ops::{AddAssign, MulAssign};
 
-use num_traits::{float, Float};
-use half::f16;
+use num_traits::Float;
 use crate::tensor::{FloatConvert, Tensor};
 
 // get (row) vectors from a 2D table given a list of indices

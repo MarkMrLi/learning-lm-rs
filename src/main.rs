@@ -79,5 +79,5 @@ fn chat_model() {
 // ======== Server Model ========
 fn server_model() {
     let rt = Runtime::new().unwrap();
-    // rt.block_on(server::start_server());
+    rt.block_on(server::start_server());
 }

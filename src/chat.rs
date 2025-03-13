@@ -20,11 +20,13 @@ struct Session{
 struct  Uuid {
     user_id: String,
 }
-struct ChatEngine {
+pub struct ChatEngine {
     // 模型参数
     model : Llama<f32>,
     tokenizer : Tokenizer,
-    sessions: DashMap<Uuid, Session> // ✅ 并发安全
+    sessions: DashMap<String, Session>, // ✅ 并发安全
+    // 聊天模型特有字段
+    system_prompt: String,
 
 }
 pub struct ChatModel {
@@ -253,5 +255,19 @@ fn format_prompt( user_input: String) -> String {
     prompt
 }
 impl ChatEngine {
-    
+    pub fn new() -> Self {
+        let project_dir = env!("CARGO_MANIFEST_DIR");
+        let model_dir = PathBuf::from(project_dir).join("models").join("chat");
+        
+        // 先创建临时model实例
+        let model = Llama::<f32>::from_safetensors(&model_dir);
+
+        // 现在可以安全初始化结构体字段
+        ChatEngine {
+            model,
+            tokenizer: Tokenizer::from_file(model_dir.join("tokenizer.json")).unwrap(),
+            sessions: DashMap::new(),
+            system_prompt: "You are a chatbot".to_string(),
+        }
+    }
 }

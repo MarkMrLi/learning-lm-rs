@@ -18,3 +18,5 @@ tokio-tungstenite = { version = "0.21" }
 tokio = { version = "1.6.0", features = ["full"] }
 tokio-util = { version = "0.6.7", features = ["full"] }
 tokio-stream = { version = "0.1.6"}
+log = "0.4.26"
+axum = "0.8.1"

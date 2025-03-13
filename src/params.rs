@@ -1,7 +1,6 @@
 use crate::config::LlamaConfigJson;
 use crate::tensor::Tensor;
 use safetensors::SafeTensors;
-use bytemuck::{Pod, Zeroable, try_from_bytes};
 use half::{bf16,f16};
 use std::mem;
 

@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::ops::{Add, AddAssign, MulAssign};
+use std::ops::{AddAssign, MulAssign};
 use std::vec;
 use crate::{config::LlamaConfigJson, params::FromLeBytes};
 use crate::kvcache::KVCache;
@@ -10,7 +10,7 @@ use crate::operators::*;
 use safetensors::SafeTensors;
 use std::path::Path;
 use std::iter::Sum;
-use num_traits::{Float};
+use num_traits::Float;
 
 
 pub struct Llama<T> {
