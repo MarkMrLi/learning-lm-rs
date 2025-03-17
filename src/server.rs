@@ -24,11 +24,18 @@ struct AppState {
 struct Response {
     output: String,
 }
+// curl -X POST http://localhost:3000/chat \
+//   -H "Content-Type: application/json" \
+//   -d '{"user_id": "marklee" ,"user_input": "Tell me a story"}'
 async fn chat_app(
     State(state): State<Arc<AppState>>,
     Json(payload): Json<ChatRequest>,
-) {
+) -> impl IntoResponse{
     // Chat app logic
+    let bot = state.bot.clone();
+    let output = bot.generate(payload.user_id, payload.user_input);
+
+    Json(Response{output})
 
 }
 // curl -X POST http://localhost:3000/story \

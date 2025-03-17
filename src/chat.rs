@@ -3,7 +3,7 @@ use tokenizers::Tokenizer;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use crate::model::Llama;
-use crate::kvcache::KVCache;
+use crate::kvcache::{self, KVCache};
 use dashmap::DashMap;
 struct Conversation {
     input: String,
@@ -269,5 +269,33 @@ impl ChatEngine {
             sessions: DashMap::new(),
             system_prompt: "You are a chatbot".to_string(),
         }
+    }
+    pub fn generate(&self, user_id: String, user_input: String) -> String {
+        let input = format_prompt(user_input);
+    
+        // Use entry API to get or insert the session, which returns a RefMut
+        let mut session = self.sessions.entry(user_id.clone()).or_insert_with(|| {
+            Session {
+                title: user_id.clone(),
+                history: Vec::new(),
+                kvcache: self.model.new_cache(),
+                // Initialize other fields...
+            }
+        });
+    
+        let binding = self.tokenizer.encode(input.clone(), true).unwrap();
+        let input_ids = binding.get_ids();
+    
+        // Now session is a mutable RefMut, allowing mutable access to kvcache
+        let output_ids = self.model.chat_generator(
+            input_ids,
+            300,
+            0.8,
+            20,
+            1.,
+            &mut session.kvcache, // Correctly borrows mutable reference
+        );
+        let output = self.tokenizer.decode(&output_ids, true).unwrap();
+        output
     }
 }
