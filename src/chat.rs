@@ -3,7 +3,7 @@ use tokenizers::Tokenizer;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use crate::model::Llama;
-use crate::kvcache::{self, KVCache};
+use crate::kvcache::KVCache;
 use dashmap::DashMap;
 struct Conversation {
     input: String,
@@ -16,9 +16,6 @@ struct Session{
     history: Vec<(usize, Conversation)>,
     // 会话缓存
     kvcache: KVCache<f32>,
-}
-struct  Uuid {
-    user_id: String,
 }
 pub struct ChatEngine {
     // 模型参数
@@ -149,7 +146,7 @@ impl ChatModel {
                 continue;
             }
     
-            let mut format_input = format_prompt(input.clone());
+            let format_input = format_prompt(input.clone());
             let session = self.sessions.get_mut(session_id).unwrap();
             if session.history.is_empty() {
                 session.title = input.clone();

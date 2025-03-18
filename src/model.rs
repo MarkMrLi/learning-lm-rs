@@ -285,7 +285,7 @@ fn self_attention<T: Default + Copy + Float + FloatConvert + MulAssign + AddAssi
         
     }
 
-    // ======== Step 2: attn = softmax(score) ========
+    // ======== Step 2: attn = masked_softmax(score) ========
     OP::masked_softmax(att_scores);
     
     // ======== Step 3: hidden_states = attn @ V ========

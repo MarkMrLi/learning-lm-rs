@@ -52,7 +52,6 @@ impl<T: Copy + Default + FromLeBytes + 'static> LLamaParams<T> {
             let element_size = match tensor_dtype {
                 safetensors::Dtype::F32 => mem::size_of::<f32>(),
                 safetensors::Dtype::F16 => mem::size_of::<f16>(),
-                safetensors::Dtype::BF16 => mem::size_of::<bf16>(),
                 _ => panic!("Unsupported data type: {:?}", tensor_dtype),
             };
             

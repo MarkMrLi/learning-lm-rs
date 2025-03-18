@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::path::PathBuf;
 use crate::model;
 use tokenizers::Tokenizer;
-use log::info;
 
 // Add serde's Deserialize derive
 #[derive(serde::Deserialize)]
