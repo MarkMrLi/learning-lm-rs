@@ -1,3 +1,184 @@
+
+## Self Attention
+### 自注意力机制的白话理解：
+	利用 q1 分别与 k1,k2,k3…kT 计算向量点积，得到 α1,1,α1,2,α1,3…α1,T （从数值上看， α1,i 还不一定是0-1之间的数，还需经过softmax处理）；
+	将 α1,1,α1,2,α1,3…α1,T 输入softmax层，从而得到均在0-1之间的注意力权重值： α1,1^,α1,2^,α1,3^…α1,T^ ；
+	将上一步得到的 α1,1^,α1,2^,α1,3^…α1,T^ 分别与对应位置的 v1,v2,v3…vT 相乘，然后求和，这样便得到了与输入的 x1 所对应的输出 b1。
+
+- Step 1 : score = Q @ K.T / sqrt(dim) 计算注意力分数
+
+这里主要遇到的困难是多头的的问题，这里q的头数是k，v头数的整数倍，他们的形状如下：
+Q.shape= (seq,n_kv_h * n_groups * dqkv)
+(KV).shape= (total_seq,n_kv_h * dqkv)
+
+我们可以看到Q的头数是KV头数的n_groups倍，相当于对于同一个n_kv_h组内的QKV中，一个KV对应多个（n_groups个）Q,因此可以获得n_groups个score,总共获得的n_kv_h * n_groups的score。
+score.shape= (n_kv_h,n_groups,seq,total_seq)
+我对于score的形状理解如下图：
+
+ ![image](https://github.com/user-attachments/assets/d9f93d61-02ab-4374-9695-6cdddde63950)
+
+ 在代码实现方面，我采用的方法是将这些矩阵视为多个向量，并按照正确的对应关系手动进行索引和向量乘法：
+ ![image](https://github.com/user-attachments/assets/f064aba7-113f-4ee4-8b21-289fe485e498)
+
+- Step 2: attn = masked_softmax(score)
+该操作的核心作用是==通过掩码（Mask）控制注意力权重的计算范围==，从而实现对模型行为的精准约束。，原本的项目中已经有实现，但是在进行混合精度优化（详细介绍见后文）的时候，这里masked_softmax算子是精度敏感的，所以需要保持f32精度，部分代码如下：
+```rust
+            // 阶段 2: 计算指数和（保持 f32 精度）
+            let sum = (0..boundary)
+                .map(|j| {
+                    let orig_val = data[offset + j].to_f32();
+                    let e = (orig_val - max).exp();
+                    e
+                })
+                .sum::<f32>();
+```
+
+- Step 3: hidden_states = attn @ V
+这里
+att_scores.shape= (n_kv_h,n_groups,seq,total_seq)
+V.shape=(total seq ,n_(kv_h )* dqkv)
+类似于之前 Step 1中score的计算，这里实现也是采用手动索引的方式，不过通过分块循环和内存布局优化，实现了高效的注意力计算：
+	内存连续访问（如 v_id 优先遍历）提升缓存利用率。
+	动态分数累加（score * v_vec）生成最终的隐藏状态。
+具体代码实现如下：
+ ![image](https://github.com/user-attachments/assets/50793b08-e1f6-4c09-82dd-2e5a1d3db3a5)
+
+## 混合精度推理
+在大模型推理中，推荐使用 half crate，因为它支持硬件加速，并且提供了丰富的浮点运算和转换功能。
+Rust 是类型安全的语言，因此在 Rust 中做类型转换不是一件简单的事
+优化部分：
+通过自定义特征 FloatConvert 绕过孤儿规则
+	1. 统一处理不同精度浮点类型的转换
+	2. 保持内存直接操作，避免中间 Tensor 创建
+	3. 完全消除类型遮蔽问题
+	4. 保留原始 Tensor 的修改能力
+ ![image](https://github.com/user-attachments/assets/4f9640bc-32c1-4529-9b93-42896f313624)
+
+但是在RoPE，masked_softmax，rms_norm，swiglu等精度敏感的算子中，需要显式的转换为高精度，举例RoPE实现方法，其余算子类似：
+ ![image](https://github.com/user-attachments/assets/6abd3776-2c30-4080-8fad-54e611febb15)
+
+在获取参数时，根据safetensor配置文件中的tensor_dtype决定模型的参数类型：
+ ![image](https://github.com/user-attachments/assets/b7757675-fa8c-48d6-b7ae-4c3c235bcb07)
+ 
+## 功能：文本生成
+Generate函数用于基于输入的初始 Token 序列（token_ids）自回归生成文本，支持通过参数控制生成长度、采样策略（top_p、top_k、temperature）和终止条件。函数开始时初始化了一个空的结果列表result和一个KVCache（键值缓存）。然后进入循环，直到生成的序列长度达到max_len。在每次循环中，根据是否是首次迭代来决定输入token：首次使用初始的token_ids，后续则使用上一次生成的最后一个token。然后将输入转换为Tensor，执行前向计算得到logits，通过采样方法得到新的token ID，添加到结果中。如果生成的token是EOS（结束符），则提前终止循环。最后，移除可能多生成的一个EOS。
+ 
+设计好generate函数后，我们的文本生成功能就基本完成了，我们获取模型参数，调用generate函数测试一下文本生成效果：
+ 
+还算是一个能读的故事吧。
+## 功能：AI对话
+为了方便后续的会话管理和历史回滚的功能的实现，这里设计聊天模型实现如下：
+/* 
+    聊天模型的实现
+        外部接口
+            1. 实现ChatModel::new方法，用于初始化聊天模型 
+            2. generator trait实现
+            3. 实现ChatModel::process_history方法，用于处理对话历史，会话回滚
+            4. 实现会话切换，多会话管理
+        内部接口
+            1. ChatModel::format_prompt方法，用于格式化用户输入
+
+*/
+因为需要在多轮对话中，保存和管理用户的kvcache。我需要对model的generate函数做简单修改，增加kvcache参数用于存储用户多轮对话中的信息：
+ 
+设计对话的模板，实现聊天专用的prompt格式
+ 
+聊天模型使用方法
+ChatModel::new方法，用于初始化聊天模型 
+获取对应模型参数，初始化会话，获取tokenizer
+ 
+ChatModel::begin方法，启动聊天模型逻辑
+会话管理的内容在后面拓展中详细介绍，生成对话逻辑与文本生成类似，主要注意要使用对话模板：
+ 
+对话测试
+1. 选择聊天机器人
+2. 开启一个新的会话
+3. 输入Tell me a story
+ 
+起码生成内容起码语法差不多是对的/(ㄒoㄒ)/~~
+拓展内容
+## 多会话管理
+在聊天模型（结构见AI会话部分的聊天模型的实现）的sessions字段中存储多会话内容，Session的结构如下：
+struct Session{
+    // 会话标题
+    title: String,
+    // 会话历史
+    history: Vec<(usize, Conversation)>,
+    // 会话缓存
+    kvcache: KVCache<f32>,
+}
+
+History用于存储历史的会话信息，用户在选择之前会话时候帮助用户提供记忆（用户的记忆）
+Kvcache用于利用之前的信息进行推理（模型的记忆）
+使用方法
+两个函数：
+new_session：生成新的会话
+ 
+history_session：选择历史会话
+ 
+使用测试
+开启一个新会话的演示见前文（功能：AI对话），这里仅展示选择历史会话的演示：
+1. 选择继续之前的会话Continue a previous conversation
+2. 这里会打印出历史所有的会话，并有提示信息
+ 
+3. 选择一个会话之后，会打印出该会话之前的所有信息，并且提示用户继续输入信息，继续进行对话
+ 
+历史回滚
+在history中还保存了每次会话生成的kv_count，回滚的方法就是在kv_cache中删除上次的kv_count值
+ 
+在kv_cache中实现回滚函数，在这里也就是更新length值，因为在推理过程中会根据该值提取对应的total_seq：
+ 
+测试
+用户在对话中输入rollback，就会回滚到上一轮对话，并且打印之前的历史信息
+ 
+
+
+## 网络服务 API
+技术方案：使用高性能异步框架：axum 
+由于需要并行访问（可能同时处理多个请求），需要持久化+自动清理机制，修改聊天模型：
+Vec → DashMap
+通过将 Vec 升级为 DashMap，不仅解决了线程安全问题，更为系统带来了水平扩展能力。这种改造相当于把单车道乡村公路升级为多车道高速公路，在保证安全的前提下大幅提升了通行能力
+pub struct ChatEngine {
+    // 模型参数
+    model : Llama<f32>,
+    tokenizer : Tokenizer,
+    sessions: DashMap<String, Session>, // ✅ 并发安全
+    // 聊天模型特有字段
+    system_prompt: String,
+
+}
+使用user_id进行区分多会话，保存历史信息
+在服务端设计使用Appstate共享全局状态
+struct AppState {
+    bot: Arc<ChatEngine>,
+}
+两个分别路由到聊天和故事续写模型
+ 
+使用测试
+故事续写模型
+curl -X POST http://localhost:3000/story \
+  -H "Content-Type: application/json" \
+  -d '{"user_input": "Once upon a time"}'
+
+ 
+聊天模型
+curl -X POST http://localhost:3000/chat \
+  -H "Content-Type: application/json" \
+  -d '{"user_id": "marklee" ,"user_input": "Tell me a story"}'
+
+ 
+
+Todo：
+量化支持		
+SIMD优化
+并行处理
+流式输出
+
+学习感悟
+一次很好的学习经历，首先学习了rust感觉上手很难，学习曲线比较大，在此之前没有接触过大模型推理的情况下，进行作业阶段的学习，老师讲课非常清楚，作业难度曲线也比较平滑，对推理模型有了基础的了解，最后的项目阶段，Self-Attention的理解部分感觉还是有些难度，特别是多头的理解和矩阵相乘的形状转换，调试起来也比较困难，最后经过很久的调试，发现竟然是MLP中SiLU（gate）这里写错了（😵），之后的多会话管理，历史回滚和混合精度等理解难度不大，主要是设计的问题，整体来说学习的体验非常好，每个阶段都能学到内容，对于零基础的我来说难度中偏上，慢慢来写还是可以完成的。
+最后感谢各位工作者们提供这次宝贵的学习机会！
+ 
+
 # 简单大模型推理系统
 
 欢迎各位同学。本课程中，各位将用Rust语言分阶段实现一个简单的大模型推理程序。
